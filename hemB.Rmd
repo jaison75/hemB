@@ -1,0 +1,219 @@
+---
+title: "PicnicHealth Hemophilia B subset Analysis"
+author: "Jaison Jacob"
+date: "2022-10-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(PicnicHealth)
+library(PicnicBlanket)
+library(magrittr)
+library(DT)
+library(ggpmisc)
+
+filename <- "/Users/poops/Projects/sample_dataset/data"
+hemB <- load_data_set("/Users/poops/Projects/sample_dataset/data")
+
+npc_df <- data.frame(
+  x = c(0, 0, 1, 1, 0.5),
+  x.chr = c("left", "left", "right", "right", "center"),
+  y = c(0, 1, 0, 1, 0.5),
+  y.chr = c("bottom", "top", "bottom", "top", "middle"),
+  text = c("bottom-left", "top-left", "bottom-right", "top-right", "center-middle")
+)
+```
+
+## Hemophilia B test dataset exploration
+
+The goal of this analysis is to assess the hypothesis that compared to mild or moderate hemophilia B patients, patients with severe hemophilia B have:
+
+1. higher healthcare utilization 
+2. more bleeds.
+
+Our definition of the phenotypic severity will be as follows:
+
+* Patients with a baseline factor IX level of <1% have severe hemophilia
+* Patients with a baseline factor IX level of 1-5% have moderate hemophilia
+* Patients with a baseline factor IX level of 5-50% have mild hemophilia 
+
+```{r table_1, include = TRUE}
+table_one( hemB)
+
+```
+
+Table 1. Patient characteristics for this exploratory cohort is shown above.
+
+Now let us start diving into the ***<span style="color:red">baseline</span>*** data and create data subsets for easy exploration and analysis.  The code below parses the baseline dataset and creates a severity index using our definitions above based on the Coagulation factor IX activity actual/normal in Platelet poor plasma by Coagulation assay.
+
+```{r clean_baseline_data, include = TRUE}
+severity_data <- hemB$baseline %>% 
+  dplyr::filter(measurement_concept_id == "8b961efa-cc89-55c3-bcd8-e83c74cb4612") %>% 
+  dplyr::mutate(value_as_range = tidyr::replace_na(value_as_range,"{}")) %>% 
+  dplyr::mutate(tidyjson::spread_all(value_as_range)) %>% 
+  dplyr::mutate(baseline_value = dplyr::case_when(
+    recorded_value_type == "number" ~ value_as_number, 
+    type %in% c("lessThan", "lessThanOrEqualTo") ~ borderValue - 0.1, 
+    type %in% c("greaterThanOrEqualTo", "greaterThan") ~ borderValue + 0.1, 
+    type == "between" ~ (lowValue + highValue)/2)) %>% 
+  dplyr::mutate(b_severity = dplyr::case_when(
+    baseline_value <  1 ~ "Severe", 
+    baseline_value >= 1 & baseline_value <= 5 ~ "Moderate", 
+    baseline_value > 5 & baseline_value <=  50 ~ "Mild", 
+    baseline_value > 50 ~ "Normal")) %>% 
+  dplyr::group_by(person_id) %>% 
+  dplyr::filter(baseline_value == min(baseline_value)) %>%
+  dplyr::distinct( person_id, baseline_value, b_severity ) %>%
+  dplyr::arrange( baseline_value )
+
+severity_data$person_id = factor(severity_data$person_id, 
+                                 levels = severity_data$person_id)
+
+DT::datatable(severity_data)
+
+kableExtra::kable(severity_data, align = "l")
+```
+
+Now we will explore the ***<span style="color:red">visit</span>*** data to obtain healthcare utilization information from *Inpatient Visits* and *Outpatient Visits* columns.
+
+```{r hosp_data, include = TRUE}
+hospitalization_data <- hemB$visit %>%
+  dplyr::mutate(hosp_days = difftime(hemB$visit$visit_end_date,
+                                     hemB$visit$visit_start_date, units = "days") %>%
+                  as.integer) %>% 
+  dplyr::group_by( person_id, visit_concept_name) %>%
+  dplyr::mutate( visit_type_count = dplyr::n(),
+                 total_hosp_days = sum(hosp_days)) %>%
+  dplyr::ungroup() %>%
+  dplyr::distinct( person_id, visit_concept_name, visit_type_count, total_hosp_days) %>%
+  tidyr::pivot_wider( names_from = visit_concept_name,
+                      values_from = c(visit_type_count, total_hosp_days)) %>%
+  dplyr::select( person_id,
+                 in_visits  = `visit_type_count_Inpatient Visit`,
+                 out_visits = `visit_type_count_Outpatient Visit`,
+                 overnight_hosp = `total_hosp_days_Inpatient Visit`) %>%
+  dplyr::left_join( severity_data, by = "person_id") %>%
+  dplyr::arrange( baseline_value ) %>%
+  dplyr::mutate( total_visits = tidyr::replace_na(in_visits,0) + 
+                   tidyr::replace_na(out_visits, 0))
+
+hospitalization_data$person_id = factor(hospitalization_data$person_id, 
+                                 levels = hospitalization_data$person_id)
+
+age_data <- hemB$person %>%
+  dplyr::mutate(age_at_enroll = difftime(enrollment_date, 
+                                         date_of_birth,
+                                         units = "days")/365 %>%
+  as.numeric()) %>%
+  dplyr::select(person_id,age_at_enroll, 
+                sex = sex_concept_name, 
+                race  = race_concept_name) %>%
+  dplyr::left_join( severity_data, by = "person_id") %>%
+  dplyr::arrange( baseline_value ) %>%
+  dplyr::mutate(age_at_enroll = sprintf("%0.1f", age_at_enroll))
+
+age_data$person_id = factor(age_data$person_id, 
+                                 levels = age_data$person_id)
+
+age_data <- dplyr::left_join( age_data, severity_data)
+
+hospitalization_data <- dplyr::left_join( age_data, hospitalization_data) %>%
+  dplyr::mutate( label1 = sprintf("Age = %s; Overnights = %s", 
+                                 age_at_enroll,in_visits),
+                 label2 = sprintf("Age = %s; Overnights = %s", 
+                                 age_at_enroll,out_visits),
+                 label3 = sprintf("Age = %s; Overnights = %s", 
+                                 age_at_enroll,overnight_hosp),
+                 )
+
+DT::datatable( hospitalization_data)
+kableExtra::kable(hospitalization_data, align = "l")
+
+ggplot( hospitalization_data,
+        aes( x= in_visits, 
+             y=person_id, 
+             label = label1,
+             fill = b_severity)) +
+    geom_bar(  stat = "identity") +
+    geom_text( aes(x=10), size = 2, hjust = 0) 
+
+ggplot( hospitalization_data,
+        aes( x= out_visits, 
+             y=person_id, 
+             label = label2,
+             fill = b_severity)) +
+    geom_bar(  stat = "identity") +
+    geom_text( aes(x=10), size = 2, hjust = 0) 
+
+ggplot( hospitalization_data,
+        aes( x= overnight_hosp, 
+             y=person_id, 
+             label = label3,
+             fill = b_severity)) +
+    geom_bar(  stat = "identity") +
+    geom_text( aes(x=10), size = 2, hjust = 0) 
+
+```
+Next, let us look at the treatment data to see if there are any straightford correlations between severity as we have defined vs number of bleeds.  For this exploration we will start with the ***<span style="color:red">bleed_rate</span>*** dataset.
+
+
+```{r bleed_rate, include = TRUE}
+bleed_data <- hemB$bleed_rate %>%
+  dplyr::mutate( bleed_days = 
+                   dplyr::case_when(
+                     bleed_window_type == "Bleeds between two dates" ~
+                       (picnic_health_data$bleed_rate$bleed_window_end_date -
+                          picnic_health_data$bleed_rate$bleed_window_start_date) %>% as.numeric,
+                     bleed_window_type == "Bleeds per unit time" ~
+                       dplyr::case_when( bleed_window_unit_time == "Per 6 Months" ~ 6*30.5 ,
+                                         bleed_window_unit_time == "Per Month" ~ 30.5,
+                                         bleed_window_unit_time == "Per Year" ~ 365,
+                                         bleed_window_unit_time == "Per 6 Weeks" ~ 6*7,
+                                         bleed_window_unit_time == "Per 2 Weeks" ~ 2*7,
+                                         bleed_window_unit_time == "Per Week" ~ 7,
+                                         bleed_window_unit_time == "Per 2 Months" ~ 2*30.5,
+                                         bleed_window_unit_time == "Per 3 Months" ~ 3*30.5
+                       )  
+                   )
+  ) %>%
+  dplyr::mutate(bleed_count_as_range = tidyr::replace_na(bleed_count_as_range,"{}")) %>% 
+  dplyr::mutate(tidyjson::spread_all(bleed_count_as_range)) %>% 
+  dplyr::mutate(bleed_count_in_period = dplyr::case_when(
+    recorded_bleed_count_type == "number" ~ bleed_count_as_number, 
+    type %in% c("lessThan") ~ borderValue - 1, 
+    type == "between" ~ (lowValue + highValue)/2)) %>%
+  dplyr::left_join(age_data)
+  
+bleed_data$person_id = factor( bleed_data$person_id,
+                               levels = levels(age_data$person_id))
+
+bleed_data <- bleed_data %>% droplevels %>%
+  dplyr::mutate( std_bleed_cound = bleed_count_as_number/bleed_days*365)
+
+ggplot( bleed_data, aes(x=bleed_window_collection_date, y= reorder(person_id,std_bleed_cound) , size=std_bleed_cound, color = b_severity)) + geom_point()
+ggplot( bleed_data, aes(x=bleed_window_collection_date, y= reorder(person_id,bleed_count_as_number) , size=bleed_count_as_number, color = b_severity)) + geom_point()
+
+```
+
+```{r bleed_data_2, include = TRUE}
+
+bleed_data %>%
+  dplyr::group_by( person_id) %>%
+  dplyr::mutate( total_bleed_days = sum(bleed_days),
+                 total_bleeds = sum(bleed_count_as_number),
+                 overall_bleed_rate = total_bleeds/total_bleed_days*365 ) %>%
+  dplyr::ungroup() %>%
+  dplyr::distinct( person_id, age_at_enroll, sex, race,total_bleed_days,total_bleeds )
+
+```
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
