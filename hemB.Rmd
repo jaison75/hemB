@@ -5,26 +5,28 @@ date: "2022-10-23"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=TRUE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
 library(ggplot2)
 library(PicnicHealth)
 library(PicnicBlanket)
 library(magrittr)
 library(DT)
 library(ggpmisc)
+library(kableExtra)
 
-filename <- "/Users/poops/Projects/sample_dataset/data"
-hemB <- load_data_set("/Users/poops/Projects/sample_dataset/data")
-
-npc_df <- data.frame(
-  x = c(0, 0, 1, 1, 0.5),
-  x.chr = c("left", "left", "right", "right", "center"),
-  y = c(0, 1, 0, 1, 0.5),
-  y.chr = c("bottom", "top", "bottom", "top", "middle"),
-  text = c("bottom-left", "top-left", "bottom-right", "top-right", "center-middle")
-)
+filename <- "/Users/poops/Projects/hemB/sample_dataset/data"
+hemB <- load_data_set(filename)
 ```
+```{r other_settings, echo = FALSE}
+blanks <- rep(c(' ', '\n'),5) # This will print five blank lines between plots. 
+
+AddBreak <- function() {
+for (i in blanks)
+  cat(i)
+}
+```
+
 
 ## Hemophilia B test dataset exploration
 
@@ -39,12 +41,13 @@ Our definition of the phenotypic severity will be as follows:
 * Patients with a baseline factor IX level of 1-5% have moderate hemophilia
 * Patients with a baseline factor IX level of 5-50% have mild hemophilia 
 
+
+Table 1. Patient characteristics for this exploratory cohort is shown above.
 ```{r table_1, include = TRUE}
 table_one( hemB)
 
 ```
 
-Table 1. Patient characteristics for this exploratory cohort is shown above.
 
 Now let us start diving into the ***<span style="color:red">baseline</span>*** data and create data subsets for easy exploration and analysis.  The code below parses the baseline dataset and creates a severity index using our definitions above based on the Coagulation factor IX activity actual/normal in Platelet poor plasma by Coagulation assay.
 
@@ -70,15 +73,20 @@ severity_data <- hemB$baseline %>%
 
 severity_data$person_id = factor(severity_data$person_id, 
                                  levels = severity_data$person_id)
-
-DT::datatable(severity_data)
-
-kableExtra::kable(severity_data, align = "l")
 ```
+
+```{r show_severity, echo = FALSE}
+severity_data %>%
+  kbl(caption = "Table 2. Severity Data") %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", 
+                  html_font = "Cambria")
+```
+
+
 
 Now we will explore the ***<span style="color:red">visit</span>*** data to obtain healthcare utilization information from *Inpatient Visits* and *Outpatient Visits* columns.
 
-```{r hosp_data, include = TRUE}
+```{r hosp_data, include = TRUE, echo = TRUE}
 hospitalization_data <- hemB$visit %>%
   dplyr::mutate(hosp_days = difftime(hemB$visit$visit_end_date,
                                      hemB$visit$visit_start_date, units = "days") %>%
@@ -128,8 +136,18 @@ hospitalization_data <- dplyr::left_join( age_data, hospitalization_data) %>%
                                  age_at_enroll,overnight_hosp),
                  )
 
-DT::datatable( hospitalization_data)
-kableExtra::kable(hospitalization_data, align = "l")
+```
+
+
+```{r show_hosp, echo = FALSE}
+hospitalization_data %>%
+  dplyr::select(-c(label1, label2, label3)) %>%
+  kbl(caption = "Table 2. Hospitalization Data") %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", 
+                  html_font = "Cambria")
+```
+
+```{r plot_hosp, echo = FALSE, warning=FALSE}
 
 ggplot( hospitalization_data,
         aes( x= in_visits, 
@@ -137,7 +155,14 @@ ggplot( hospitalization_data,
              label = label1,
              fill = b_severity)) +
     geom_bar(  stat = "identity") +
-    geom_text( aes(x=10), size = 2, hjust = 0) 
+    geom_text( aes(x=10), size = 2, hjust = 0) +
+    ggtitle("Figure 1. In-Patient Visits vs Patient ID") +
+  ylab( "Patient ID") +
+  xlab("In-patient Visits")+
+  labs( fill = "Severity")
+
+cat("\n\n")
+cat("\n\n")
 
 ggplot( hospitalization_data,
         aes( x= out_visits, 
@@ -145,7 +170,14 @@ ggplot( hospitalization_data,
              label = label2,
              fill = b_severity)) +
     geom_bar(  stat = "identity") +
-    geom_text( aes(x=10), size = 2, hjust = 0) 
+    geom_text( aes(x=10), size = 2, hjust = 0) +
+  ggtitle("Figure 2. Out-Patient Visits vs Patient ID") +
+  ylab( "Patient ID") +
+  xlab("Out-patient Visits") +
+  labs( fill = "Severity")
+
+cat("\n\n")
+cat("\n\n")
 
 ggplot( hospitalization_data,
         aes( x= overnight_hosp, 
@@ -153,19 +185,25 @@ ggplot( hospitalization_data,
              label = label3,
              fill = b_severity)) +
     geom_bar(  stat = "identity") +
-    geom_text( aes(x=10), size = 2, hjust = 0) 
+    geom_text( aes(x=10), size = 2, hjust = 0) +
+  ggtitle("Figure 3. Overnight Hospitalization vs Patient ID") +
+  ylab( "Patient ID") +
+  xlab("Overnight Hospitalization")+
+  labs( fill = "Severity")
 
 ```
-Next, let us look at the treatment data to see if there are any straightford correlations between severity as we have defined vs number of bleeds.  For this exploration we will start with the ***<span style="color:red">bleed_rate</span>*** dataset.
 
+No strong correlations seen between severeity as defined and either In-patient or Out-patient vist counts.  However, there seems to be a weak correlation between overnight hospitalizations.  There seems to be one patient classified as moderate that seems to be breaking the trend.  
+
+Next, let us look at the ***<span style="color:red">bleed_rate</span>*** to see if there are any straightforward correlations between severity as we have defined vs number of bleeds. 
 
 ```{r bleed_rate, include = TRUE}
 bleed_data <- hemB$bleed_rate %>%
   dplyr::mutate( bleed_days = 
                    dplyr::case_when(
                      bleed_window_type == "Bleeds between two dates" ~
-                       (picnic_health_data$bleed_rate$bleed_window_end_date -
-                          picnic_health_data$bleed_rate$bleed_window_start_date) %>% as.numeric,
+                       (bleed_window_end_date -
+                          bleed_window_start_date) %>% as.numeric,
                      bleed_window_type == "Bleeds per unit time" ~
                        dplyr::case_when( bleed_window_unit_time == "Per 6 Months" ~ 6*30.5 ,
                                          bleed_window_unit_time == "Per Month" ~ 30.5,
@@ -192,8 +230,34 @@ bleed_data$person_id = factor( bleed_data$person_id,
 bleed_data <- bleed_data %>% droplevels %>%
   dplyr::mutate( std_bleed_cound = bleed_count_as_number/bleed_days*365)
 
-ggplot( bleed_data, aes(x=bleed_window_collection_date, y= reorder(person_id,std_bleed_cound) , size=std_bleed_cound, color = b_severity)) + geom_point()
-ggplot( bleed_data, aes(x=bleed_window_collection_date, y= reorder(person_id,bleed_count_as_number) , size=bleed_count_as_number, color = b_severity)) + geom_point()
+```
+
+Since the number of bleeds will depend on the number of days where this information is recorded, we should ideally be looking at some standardized varibale.  We define a new variable ___standardized bleed count = 365 * (total number of bleeds per patient)/(total number of bleed days)___.
+```{r plot_bleed_rate, echo = FALSE, warning=FALSE}
+
+ggplot( bleed_data, aes(x=bleed_window_collection_date, 
+                        y= reorder(person_id,std_bleed_cound) ,
+                        size=std_bleed_cound, 
+                        color = b_severity)) + 
+  geom_point() +
+  ggtitle("Figure 4. Patients ordered by standardized bleed count vs bleed date") +
+  ylab( "Patient ordered by standardized bleed count") +
+  xlab("Overnight Hospitalization")+
+  labs( fill = "Severity")
+
+cat("\n\n\n\n")
+
+ggplot( bleed_data, aes(x=bleed_window_collection_date, 
+                        y= person_id , 
+                        size=bleed_count_as_number,
+                        color = b_severity)) +
+  geom_point() +
+  ggtitle("Figure 5. Bleed count at every bleed window collection data vs Patient ID") +
+  ylab( "Patient ID") +
+  xlab("Overnight Hospitalization")+
+  labs( fill = "Severity")
+
+cat("\n\n\n\n")
 
 ```
 
@@ -208,12 +272,3 @@ bleed_data %>%
   dplyr::distinct( person_id, age_at_enroll, sex, race,total_bleed_days,total_bleeds )
 
 ```
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
