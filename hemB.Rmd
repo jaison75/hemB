@@ -49,7 +49,7 @@ table_one( hemB)
 ```
 
 
-Now let us start diving into the ***<span style="color:red">baseline</span>*** data and create data subsets for easy exploration and analysis.  The code below parses the baseline dataset and creates a severity index using our definitions above based on the Coagulation factor IX activity actual/normal in Platelet poor plasma by Coagulation assay.
+Table 1. shows that the paients are all Males, consistent with the fact that this is an X-linked genetic disease. Now let us start diving into the ***<span style="color:red">baseline</span>*** data and create data subsets for easy exploration and analysis.  The code below parses the baseline dataset and creates a severity index using our definitions above based on the Coagulation factor IX activity actual/normal in Platelet poor plasma by Coagulation assay.
 
 ```{r clean_baseline_data, include = TRUE}
 severity_data <- hemB$baseline %>% 
@@ -197,6 +197,8 @@ No strong correlations seen between severeity as defined and either In-patient o
 
 Next, let us look at the ***<span style="color:red">bleed_rate</span>*** to see if there are any straightforward correlations between severity as we have defined vs number of bleeds. 
 
+
+
 ```{r bleed_rate, include = TRUE}
 bleed_data <- hemB$bleed_rate %>%
   dplyr::mutate( bleed_days = 
@@ -228,34 +230,40 @@ bleed_data$person_id = factor( bleed_data$person_id,
                                levels = levels(age_data$person_id))
 
 bleed_data <- bleed_data %>% droplevels %>%
-  dplyr::mutate( std_bleed_cound = bleed_count_as_number/bleed_days*365)
+  dplyr::group_by( person_id) %>%
+  dplyr::mutate( total_bleeds = sum(bleed_count_in_period),
+                 total_bleed_days = sum(bleed_days),
+                 std_bleed_count = total_bleeds/total_bleed_days*365)
 
 ```
 
 Since the number of bleeds will depend on the number of days where this information is recorded, we should ideally be looking at some standardized varibale.  We define a new variable ___standardized bleed count = 365 * (total number of bleeds per patient)/(total number of bleed days)___.
+
+
 ```{r plot_bleed_rate, echo = FALSE, warning=FALSE}
 
 ggplot( bleed_data, aes(x=bleed_window_collection_date, 
-                        y= reorder(person_id,std_bleed_cound) ,
-                        size=std_bleed_cound, 
+                        y= reorder(person_id,std_bleed_count) ,
+                        size=std_bleed_count, 
                         color = b_severity)) + 
   geom_point() +
-  ggtitle("Figure 4. Patients ordered by standardized bleed count vs bleed date") +
+  ggtitle("Figure 4. Standardized bleed count plot") +
   ylab( "Patient ordered by standardized bleed count") +
-  xlab("Overnight Hospitalization")+
-  labs( fill = "Severity")
+  xlab("Bleed window collection date")+
+  labs( color = "Severity", size = "Std. bleed count")
+  
 
 cat("\n\n\n\n")
 
 ggplot( bleed_data, aes(x=bleed_window_collection_date, 
                         y= person_id , 
-                        size=bleed_count_as_number,
+                        size=bleed_count_in_period,
                         color = b_severity)) +
   geom_point() +
-  ggtitle("Figure 5. Bleed count at every bleed window collection data vs Patient ID") +
+  ggtitle("Figure 5. Bleed count at every bleed period") +
   ylab( "Patient ID") +
-  xlab("Overnight Hospitalization")+
-  labs( fill = "Severity")
+  xlab("Bleed window collection date")+
+  labs( color = "Severity", size = "Bleed counts per period")
 
 cat("\n\n\n\n")
 
@@ -263,12 +271,84 @@ cat("\n\n\n\n")
 
 ```{r bleed_data_2, include = TRUE}
 
-bleed_data %>%
+bleed_data2 <- bleed_data %>%
   dplyr::group_by( person_id) %>%
   dplyr::mutate( total_bleed_days = sum(bleed_days),
-                 total_bleeds = sum(bleed_count_as_number),
+                 total_bleeds = sum(bleed_count_in_period),
                  overall_bleed_rate = total_bleeds/total_bleed_days*365 ) %>%
   dplyr::ungroup() %>%
-  dplyr::distinct( person_id, age_at_enroll, sex, race,total_bleed_days,total_bleeds )
+  dplyr::distinct( person_id, age_at_enroll, sex, race,total_bleed_days,total_bleeds, overall_bleed_rate ) %>%
+  dplyr::left_join(age_data)
+  
+bleed_data2$person_id = factor( bleed_data2$person_id,
+                               levels = levels(age_data$person_id))
+
+bleed_data2 <- bleed_data2 %>% droplevels
 
 ```
+
+
+```{r show_bleed_rate, echo = FALSE}
+bleed_data2 %>%
+  kbl(caption = "Table 3. Bleed rate Data") %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center", 
+                  html_font = "Cambria")
+```
+
+```{r bleeds, warning=FALSE}
+bleeds <- hemB$bleed %>%
+  dplyr::group_by( person_id, bleed_type_concept_name ) %>%
+  dplyr::summarise(count = dplyr::n()) %>% 
+  dplyr::left_join( age_data) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by( person_id) %>%
+  dplyr::mutate( total_episodes = sum(count)) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange( baseline_value, total_episodes, count) %>%
+  dplyr::left_join(age_data)
+
+bleeds$person_id = factor( bleeds$person_id,
+                               levels = levels(age_data$person_id))
+
+bleeds <- bleeds %>% droplevels
+
+ggplot(bleeds, aes(y=total_episodes, 
+              x= reorder(person_id, total_episodes), 
+              fill = b_severity
+              )) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  ggtitle("Figure 6. Total Bleeds from bleeds table") +
+  xlab( "Patient ID ordered by total bleeds") +
+  ylab("Total bleeding episodes")+
+  labs( fill = "Severity") 
+cat("\n\n\n\n")
+
+
+```
+
+
+Based on Figure 6, one could potentially make an argument that perhaps there is some evidence that severity as we have defined is associated with total number of bleeding episodes.  One can even be tempted to fit a regression line like shown in Figure 7.
+
+```{r fit, echo = FALSE}
+bleeds_distinct <- bleeds %>% 
+  dplyr::distinct( person_id, b_severity, baseline_value, total_episodes ) %>%
+  dplyr::mutate( b_severity = factor(b_severity))
+
+ggplot(bleeds_distinct, 
+       aes(x = as.numeric(b_severity), 
+           y = total_episodes)) +
+  geom_point() +
+  geom_smooth(method = 'glm') +
+    scale_x_continuous(name = "Severity",
+                       breaks=c(1,2,3),
+                       labels = c("Mild", "Moderate", "Severe"),
+                       minor_breaks = NULL) +
+  ggtitle("Figure 7. Total Bleeds vs Severity") +
+  ylab( "Total bleeding episodes") +
+  xlab("Severity")
+
+```
+## Conclusion
+
+It does not appear that the hypothesis that the severity as we define is associated with healthcare utilization or more bleeds.  It is unclear if  the ***<span style="color:red">bleed</span>*** was recorded systematically during a set period and if the bleed data were recorded in light of any prophylactic Factor IX usage.  For example , there is one patient, 86337351-2c6f-4b5d-8b43-378fa6006b9, with a *Moderate* classification, who is a 20 year old patient.  This patient has higher hospitalizations and more bleed episodes that are similar to those in the severe category.  Several variables can potentially affect these. It might be worth asking if this patient for example, has better access to health care or someone invloved in activities (like contact sports) that could increase the chances of bleeding episodes.  If patients are on phrophylaxis, it will be good to understand the dose, time from last admininstration of the therapy before recording the coagulation asaay, halflife of the specific drug used etc.  A larger dataset could ptentially be helpful
